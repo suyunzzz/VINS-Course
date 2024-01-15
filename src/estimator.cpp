@@ -8,6 +8,7 @@
 
 #include <ostream>
 #include <fstream>
+#include <glog/logging.h>
 
 using namespace myslam;
 
@@ -119,6 +120,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     {
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         //if(solver_flag != NON_LINEAR)
+        // 计算两帧之间的pqv
         tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
 
         dt_buf[frame_count].push_back(dt);
@@ -162,9 +164,11 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     {
         cout << "calibrating extrinsic param, rotation movement is needed" << endl;
         if (frame_count != 0)
-        {
+        {   
+            // 获取count和count-1帧的对应点（归一化平面）
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
+            // pre_integrations[frame_count]->delta_q代表count相对于count-1帧的R_imu
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
             {
                 // ROS_WARN("initial extrinsic rotation calib success");
@@ -283,6 +287,7 @@ bool Estimator::initialStructure()
         {
             imu_j++;
             Vector3d pts_j = it_per_frame.point;
+            // 该特征在多帧归一化平面上的坐标, <frame_idx, <norm_x, norm_y>>
             tmp_feature.observation.push_back(make_pair(imu_j, Eigen::Vector2d{pts_j.x(), pts_j.y()}));
         }
         sfm_f.push_back(tmp_feature);
@@ -290,6 +295,7 @@ bool Estimator::initialStructure()
     Matrix3d relative_R;
     Vector3d relative_T;
     int l;
+    // relative_R: l-th frame coordinate relative to WINDOWN_SIZE-th coordinate 
     if (!relativePose(relative_R, relative_T, l))
     {
         cout << "Not enough features or parallax; Move device around" << endl;
@@ -316,6 +322,8 @@ bool Estimator::initialStructure()
         if ((frame_it->first) == Headers[i])
         {
             frame_it->second.is_key_frame = true;
+            // Q: camera to world
+            // frame_it->second.R: imu to world 
             frame_it->second.R = Q[i].toRotationMatrix() * RIC[0].transpose();
             frame_it->second.T = T[i];
             i++;
@@ -325,6 +333,7 @@ bool Estimator::initialStructure()
         {
             i++;
         }
+        // world to camera
         Matrix3d R_inital = (Q[i].inverse()).toRotationMatrix();
         Vector3d P_inital = -R_inital * T[i];
         cv::eigen2cv(R_inital, tmp_r);
@@ -337,6 +346,7 @@ bool Estimator::initialStructure()
         for (auto &id_pts : frame_it->second.points)
         {
             int feature_id = id_pts.first;
+            // id_pts.second代表<camera_id, image_point>，所以下面的for只会循环一次
             for (auto &i_p : id_pts.second)
             {
                 it = sfm_tracked_points.find(feature_id);
@@ -345,6 +355,7 @@ bool Estimator::initialStructure()
                     Vector3d world_pts = it->second;
                     cv::Point3f pts_3(world_pts(0), world_pts(1), world_pts(2));
                     pts_3_vector.push_back(pts_3);
+                    // 归一化平面坐标
                     Vector2d img_pts = i_p.second.head<2>();
                     cv::Point2f pts_2(img_pts(0), img_pts(1));
                     pts_2_vector.push_back(pts_2);
@@ -357,6 +368,7 @@ bool Estimator::initialStructure()
             cout << "Not enough points for solve pnp pts_3_vector size " << pts_3_vector.size() << endl;
             return false;
         }
+        // rvec: world to camera
         if (!cv::solvePnP(pts_3_vector, pts_2_vector, K, D, rvec, t, 1))
         {
             cout << " solve pnp fail!" << endl;
@@ -365,10 +377,12 @@ bool Estimator::initialStructure()
         cv::Rodrigues(rvec, r);
         MatrixXd R_pnp, tmp_R_pnp;
         cv::cv2eigen(r, tmp_R_pnp);
+        // R_pnp: camera to world
         R_pnp = tmp_R_pnp.transpose();
         MatrixXd T_pnp;
         cv::cv2eigen(t, T_pnp);
         T_pnp = R_pnp * (-T_pnp);
+        // frame_it->second.R: imu to world
         frame_it->second.R = R_pnp * RIC[0].transpose();
         frame_it->second.T = T_pnp;
     }
@@ -386,6 +400,7 @@ bool Estimator::visualInitialAlign()
     TicToc t_g;
     VectorXd x;
     //solve scale
+    // 对所有帧，得到g_c0(重力在c0坐标系下的表示)
     bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x);
     if (!result)
     {
@@ -396,6 +411,7 @@ bool Estimator::visualInitialAlign()
     // change state
     for (int i = 0; i <= frame_count; i++)
     {
+        // Ri: c0_R_bk
         Matrix3d Ri = all_image_frame[Headers[i]].R;
         Vector3d Pi = all_image_frame[Headers[i]].T;
         Ps[i] = Pi;
@@ -403,6 +419,7 @@ bool Estimator::visualInitialAlign()
         all_image_frame[Headers[i]].is_key_frame = true;
     }
 
+    // 逆深度
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < dep.size(); i++)
         dep[i] = -1;
@@ -414,15 +431,20 @@ bool Estimator::visualInitialAlign()
         TIC_TMP[i].setZero();
     ric[0] = RIC[0];
     f_manager.setRic(ric);
+    // 得到每一个feature在第一帧中的深度
     f_manager.triangulate(Ps, &(TIC_TMP[0]), &(RIC[0]));
 
+    // 利用新的bias进行预积分
     double s = (x.tail<1>())(0);
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
     }
+    // TODO:这是啥意思？对齐尺度？
     for (int i = frame_count; i >= 0; i--)
         Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);
+
+    // 从bk_v_bk计算world_v_bk
     int kv = -1;
     map<double, ImageFrame>::iterator frame_i;
     for (frame_i = all_image_frame.begin(); frame_i != all_image_frame.end(); frame_i++)
@@ -433,6 +455,7 @@ bool Estimator::visualInitialAlign()
             Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);
         }
     }
+    // 利用得到的尺度，恢复feature的深度
     for (auto &it_per_id : f_manager.feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
@@ -441,15 +464,22 @@ bool Estimator::visualInitialAlign()
         it_per_id.estimated_depth *= s;
     }
 
-    Matrix3d R0 = Utility::g2R(g);
+    // g为g_c0，代表重力在c0坐标系下的表示
+    LOG(INFO) << "g_c0:" << g.transpose();
+    Matrix3d R0 = Utility::g2R(g);      // c0 to enu, R0: enu_R_c0
+    // enu_R_world * world_R_imu = enu_R_imu
     double yaw = Utility::R2ypr(R0 * Rs[0]).x();
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
-    g = R0 * g;
+    // g in imu cooridnate frame
+    g = R0 * g;     // imu_R_c0*g_c0 = g_imu
+    LOG(INFO) << "g_imu0:" << g.transpose();
+
+    // 
     //Matrix3d rot_diff = R0 * Rs[0].transpose();
     Matrix3d rot_diff = R0;
     for (int i = 0; i <= frame_count; i++)
     {
-        Ps[i] = rot_diff * Ps[i];
+        Ps[i] = rot_diff * Ps[i];           // b0_P_bk = b0_R_c0 * c0_P_bk
         Rs[i] = rot_diff * Rs[i];
         Vs[i] = rot_diff * Vs[i];
     }
@@ -465,6 +495,7 @@ bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         vector<pair<Vector3d, Vector3d>> corres;
+        // 第i帧作为R=I, t = 0的Global帧
         corres = f_manager.getCorresponding(i, WINDOW_SIZE);
         if (corres.size() > 20)
         {
@@ -478,6 +509,8 @@ bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
                 sum_parallax = sum_parallax + parallax;
             }
             average_parallax = 1.0 * sum_parallax / int(corres.size());
+            // average_parallax * 460代表像素视差
+            // relative_R: world to WINDOW_SIZE-th frame coordiante
             if (average_parallax * 460 > 30 && m_estimator.solveRelativeRT(corres, relative_R, relative_T))
             {
                 l = i;
@@ -496,6 +529,8 @@ void Estimator::solveOdometry()
     if (solver_flag == NON_LINEAR)
     {
         TicToc t_tri;
+        // Ps代表 b0_P_bk,
+        // TODO:得到每一个feature在第一个观测帧下的imu坐标系下的深度
         f_manager.triangulate(Ps, tic, ric);
         //cout << "triangulation costs : " << t_tri.toc() << endl;        
         backendOptimization();
@@ -928,7 +963,7 @@ void Estimator::problemSolve()
             //ROS_DEBUG("estimate extinsic param");
         }
         problem.AddVertex(vertexExt);
-        pose_dim += vertexExt->LocalDimension();
+        pose_dim += vertexExt->LocalDimension();        // local dimension = 6
     }
 
     for (int i = 0; i < WINDOW_SIZE + 1; i++)
@@ -939,7 +974,7 @@ void Estimator::problemSolve()
         vertexCam->SetParameters(pose);
         vertexCams_vec.push_back(vertexCam);
         problem.AddVertex(vertexCam);
-        pose_dim += vertexCam->LocalDimension();
+        pose_dim += vertexCam->LocalDimension();        // local dimension = 6
 
         shared_ptr<backend::VertexSpeedBias> vertexVB(new backend::VertexSpeedBias());
         Eigen::VectorXd vb(9);
@@ -949,7 +984,7 @@ void Estimator::problemSolve()
         vertexVB->SetParameters(vb);
         vertexVB_vec.push_back(vertexVB);
         problem.AddVertex(vertexVB);
-        pose_dim += vertexVB->LocalDimension();
+        pose_dim += vertexVB->LocalDimension();     // 9
     }
 
     // IMU
@@ -999,6 +1034,7 @@ void Estimator::problemSolve()
                 if (imu_i == imu_j)
                     continue;
 
+                // 观测帧上的归一化平面点
                 Vector3d pts_j = it_per_frame.point;
 
                 std::shared_ptr<backend::EdgeReprojection> edge(new backend::EdgeReprojection(pts_i, pts_j));

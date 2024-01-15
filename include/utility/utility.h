@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstring>
 #include <eigen3/Eigen/Dense>
+#include <glog/logging.h>
 
 class Utility
 {

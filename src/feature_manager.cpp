@@ -72,8 +72,10 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     }
 
     if (frame_count < 2 || last_track_num < 20)
+        // 代表当前帧的特征比较新
         return true;
 
+    // 计算count-1和count-2帧直接的视差平均值
     for (auto &it_per_id : feature)
     {
         if (it_per_id.start_frame <= frame_count - 2 &&
@@ -191,6 +193,7 @@ VectorXd FeatureManager::getDepthVector()
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 #if 1
+        // 在该feature第一帧下的逆深度
         dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
 #else
         dep_vec(++feature_index) = it_per_id->estimated_depth;
@@ -212,10 +215,12 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
         assert(NUM_OF_CAM == 1);
-        Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
+        Eigen::MatrixXd svd_A(2 *it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
         Eigen::Matrix<double, 3, 4> P0;
+        // t0, R0 代表camera to world(c0)
+        // 在初始化结束后的SolveOdometry中调用的时候，R0变为了 b0_R_ck,此时得到的深度为在imu坐标系下的
         Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
@@ -225,17 +230,21 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         {
             imu_j++;
 
+
+            // camera to world(c0)
             Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
+            // camera1 to camera0
             Eigen::Vector3d t = R0.transpose() * (t1 - t0);
             Eigen::Matrix3d R = R0.transpose() * R1;
             Eigen::Matrix<double, 3, 4> P;
             P.leftCols<3>() = R.transpose();
             P.rightCols<1>() = -R.transpose() * t;
+            // P代表camera0 to camera1
+            // f代表该feature在每一帧上的归一化坐标
             Eigen::Vector3d f = it_per_frame.point.normalized();
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
-
             if (imu_i == imu_j)
                 continue;
         }
@@ -245,6 +254,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         //it_per_id->estimated_depth = -b / A;
         //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
 
+        // 该feature在观测到的第一帧上的深度
         it_per_id.estimated_depth = svd_method;
         //it_per_id->estimated_depth = INIT_DEPTH;
 
@@ -284,15 +294,19 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
             it->start_frame--;
         else
         {
+            // 在old帧上的归一化平面坐标
             Eigen::Vector3d uv_i = it->feature_per_frame[0].point;  
             it->feature_per_frame.erase(it->feature_per_frame.begin());
+            
             if (it->feature_per_frame.size() < 2)
+            // 如果除去第一帧之后，共视帧的数量小于2，那么删除该点
             {
                 feature.erase(it);
                 continue;
             }
             else
             {
+                // 该点在第一帧下的xyz
                 Eigen::Vector3d pts_i = uv_i * it->estimated_depth;
                 Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
                 Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);
@@ -357,8 +371,8 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
 {
     //check the second last frame is keyframe or not
     //parallax betwwen seconde last frame and third last frame
-    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];
-    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];
+    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];      // feature在frame_count - 2帧上的表示
+    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];      // feature在frame_count - 1帧上的表示
 
     double ans = 0;
     Vector3d p_j = frame_j.point;

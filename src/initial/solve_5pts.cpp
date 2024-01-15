@@ -83,6 +83,7 @@ namespace cv {
         Q.row(2) /= Q.row(3);
         Q.row(3) /= Q.row(3);
         mask1 = (Q.row(2) < dist) & mask1;
+        // P1: world to i-th frame coordiante
         Q = P1 * Q;
         mask1 = (Q.row(2) > 0) & mask1;
         mask1 = (Q.row(2) < dist) & mask1;

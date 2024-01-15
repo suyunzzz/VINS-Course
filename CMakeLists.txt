@@ -4,14 +4,18 @@ project(vins_estimator)
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-std=c++11")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
+set(CMAKE_EXPORT_COMPILE_COMMANDS "true")
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-
+set(EIGEN3_INCLUDE_DIR "/usr/local/include/eigen3")
 find_package(Eigen3 REQUIRED)
+message(WARNING "EIGEN3_INCLUDE_DIR: ${EIGEN3_INCLUDE_DIR}")
 find_package(Ceres REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS filesystem program_options system)
+find_package(Gflags)
+find_package(Glog)
 
 
 message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
@@ -22,6 +26,8 @@ include_directories(
   ${CERES_INCLUDE_DIRS}
   ${Pangolin_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIRS}
+  ${GFLAGS_INCLUDE_DIRS} 
+  ${GLOG_INCLUDE_DIRS}
 )
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
@@ -41,7 +47,14 @@ add_library(camera_model SHARED
     src/camera_models/gpl/gpl.cc
     src/camera_models/gpl/EigenQuaternionParameterization.cc)
 
-target_link_libraries(camera_model ${Boost_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
+target_link_libraries(
+  camera_model 
+  ${Boost_LIBRARIES} 
+  ${OpenCV_LIBS} 
+  ${CERES_LIBRARIES} 
+  ${GFLAGS_LIBRARIES} 
+  ${GLOG_LIBRARIES}
+)
 
 
 ADD_LIBRARY(MyVio SHARED

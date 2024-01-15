@@ -1,4 +1,5 @@
 #include "initial/initial_alignment.h"
+#include <glog/logging.h>
 
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
 {
@@ -16,6 +17,7 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
         tmp_A.setZero();
         VectorXd tmp_b(3);
         tmp_b.setZero();
+        // frame_i->second.R: body to world
         Eigen::Quaterniond q_ij(frame_i->second.R.transpose() * frame_j->second.R);
         tmp_A = frame_j->second.pre_integration->jacobian.template block<3, 3>(O_R, O_BG);
         tmp_b = 2 * (frame_j->second.pre_integration->delta_q.inverse() * q_ij).vec();
@@ -26,9 +28,11 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     delta_bg = A.ldlt().solve(b);
     // ROS_WARN_STREAM("gyroscope bias initial calibration " << delta_bg.transpose());
 
+    // 将结果更新到窗口内的所有帧
     for (int i = 0; i <= WINDOW_SIZE; i++)
         Bgs[i] += delta_bg;
 
+    // 对所有帧更新与积分量
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
     {
         frame_j = next(frame_i);
@@ -52,6 +56,7 @@ MatrixXd TangentBasis(Vector3d &g0)
     return bc;
 }
 
+// 初始化速度，重力， 尺度
 void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     Vector3d g0 = g.normalized() * G.norm();
@@ -177,9 +182,12 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     A = A * 1000.0;
     b = b * 1000.0;
     x = A.ldlt().solve(b);
+    // 除以100啥意思？
     double s = x(n_state - 1) / 100.0;
+    LOG(INFO)<<"s:" << s;
     // ROS_DEBUG("estimated scale: %f", s);
     g = x.segment<3>(n_state - 4);
+    LOG(INFO)<<"g:" << g.transpose();
     // ROS_DEBUG_STREAM(" result g     " << g.norm() << " " << g.transpose());
     if(fabs(g.norm() - G.norm()) > 1.0 || s < 0)
     {
@@ -188,6 +196,8 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
 
     RefineGravity(all_image_frame, g, x);
     s = (x.tail<1>())(0) / 100.0;
+    LOG(INFO)<<"refined s:" << s;
+
     (x.tail<1>())(0) = s;
     // ROS_DEBUG_STREAM(" refine     " << g.norm() << " " << g.transpose());
     if(s < 0.0 )

@@ -12,6 +12,7 @@
 #include <highgui.h>
 #include <eigen3/Eigen/Dense>
 #include "System.h"
+#include <glog/logging.h>
 
 using namespace std;
 using namespace cv;
@@ -43,7 +44,7 @@ void PubImuData()
 	{
 		std::istringstream ssImuData(sImu_line);
 		ssImuData >> dStampNSec >> vGyr.x() >> vGyr.y() >> vGyr.z() >> vAcc.x() >> vAcc.y() >> vAcc.z();
-		// cout << "Imu t: " << fixed << dStampNSec << " gyr: " << vGyr.transpose() << " acc: " << vAcc.transpose() << endl;
+		LOG(INFO) << "Imu t: " << fixed << dStampNSec << " gyr: " << vGyr.transpose() << " acc: " << vAcc.transpose() << endl;
 		pSystem->PubImuData(dStampNSec / 1e9, vGyr, vAcc);
 		usleep(5000*nDelayTimes);
 	}
@@ -149,6 +150,9 @@ void DrawIMGandGLinMainThrd(){
 
 int main(int argc, char **argv)
 {
+	gflags::ParseCommandLineFlags(&argc, &argv, true);
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_alsologtostderr = 1;
 	if(argc != 3)
 	{
 		cerr << "./run_euroc PATH_TO_FOLDER/MH-05/mav0 PATH_TO_CONFIG/config \n" 
@@ -168,7 +172,7 @@ int main(int argc, char **argv)
 	std::thread thd_PubImageData(PubImageData);
 
 #ifdef __linux__	
-	std::thread thd_Draw(&System::Draw, pSystem);
+	// std::thread thd_Draw(&System::Draw, pSystem);
 #elif __APPLE__
 	DrawIMGandGLinMainThrd();
 #endif
@@ -176,9 +180,9 @@ int main(int argc, char **argv)
 	thd_PubImuData.join();
 	thd_PubImageData.join();
 
-	// thd_BackEnd.join();
+	thd_BackEnd.join();
 #ifdef __linux__	
-	thd_Draw.join();
+	// thd_Draw.join();
 #endif
 
 	cout << "main end... see you ..." << endl;

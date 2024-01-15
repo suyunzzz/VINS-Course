@@ -31,7 +31,7 @@ System::~System()
 {
     bStart_backend = false;
     
-    pangolin::QuitAll();
+    pangolin::Quit();
     
     m_buf.lock();
     while (!feature_buf.empty())
@@ -320,6 +320,7 @@ void System::ProcessBackEnd()
                 int v = img_msg->id_of_point[i] + 0.5;
                 int feature_id = v / NUM_OF_CAM;
                 int camera_id = v % NUM_OF_CAM;
+                // 归一化平面坐标
                 double x = img_msg->points[i].x();
                 double y = img_msg->points[i].y();
                 double z = img_msg->points[i].z();
